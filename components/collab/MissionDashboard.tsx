@@ -3,11 +3,14 @@
 
 import React, { useState } from 'react';
 import {
+  addContributor,
   archiveMission,
   getDashboard,
   patchMission,
+  removeContributor,
   reopenMission,
   type Mission,
+  type Role,
 } from '../../services/collabService';
 import {
   Badge,
@@ -38,6 +41,8 @@ export default function MissionDashboard({
   const [editing, setEditing] = useState(false);
   const [showMilestone, setShowMilestone] = useState(false);
   const [showTask, setShowTask] = useState(false);
+  const [showMeasure, setShowMeasure] = useState(false);
+  const [showContributor, setShowContributor] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -76,6 +81,18 @@ export default function MissionDashboard({
       }),
     );
 
+  const deleteMilestone = (id: string) =>
+    mutate(() => patchMission(missionId, { milestones: mission.milestones.filter((m) => m.id !== id) }));
+
+  const deleteTask = (id: string) =>
+    mutate(() => patchMission(missionId, { tasks: mission.tasks.filter((t) => t.id !== id) }));
+
+  const deleteMeasure = (id: string) =>
+    mutate(() => patchMission(missionId, { successMeasures: mission.successMeasures.filter((s) => s.id !== id) }));
+
+  const changeRole = (actor: string, role: Role) =>
+    mutate(() => addContributor(missionId, { actor, role }));
+
   return (
     <div className="space-y-5">
       {actionError && <ErrorState message={actionError} />}
@@ -98,9 +115,47 @@ export default function MissionDashboard({
               {mission.description && <p className="mt-1 max-w-3xl text-sm text-slate-600">{mission.description}</p>}
               <p className="mt-2 text-xs text-slate-600">
                 Owner: <span className="font-medium text-slate-800">{mission.owner}</span>
-                {' · '}
-                Contributors: {mission.contributors.map((c) => `${c.actor} (${c.role})`).join(', ') || '—'}
               </p>
+              <div className="mt-2">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-700">Contributors</span>
+                  <Btn variant="subtle" onClick={() => setShowContributor(true)} disabled={busy}>
+                    + Add
+                  </Btn>
+                </div>
+                {mission.contributors.length === 0 ? (
+                  <p className="text-xs text-slate-600">No contributors yet.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {mission.contributors.map((c) => (
+                      <li key={c.actor} className="flex items-center gap-2 text-xs">
+                        <span className="font-medium text-slate-800">{c.actor}</span>
+                        <select
+                          value={c.role}
+                          disabled={busy}
+                          onChange={(e) => changeRole(c.actor, e.target.value as Role)}
+                          aria-label={`Role for ${c.actor}`}
+                          className="rounded border border-stone-300 bg-white px-1 py-0.5 text-xs"
+                        >
+                          <option value="owner">owner</option>
+                          <option value="editor">editor</option>
+                          <option value="viewer">viewer</option>
+                        </select>
+                        {c.actor !== mission.owner && (
+                          <button
+                            onClick={() => mutate(() => removeContributor(missionId, c.actor))}
+                            disabled={busy}
+                            aria-label={`Remove ${c.actor}`}
+                            className="text-slate-500 hover:text-red-700"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Btn variant="ghost" onClick={() => setEditing(true)} disabled={busy}>
@@ -159,6 +214,14 @@ export default function MissionDashboard({
                       {m.title}
                     </span>
                     <span className="ml-auto text-xs text-slate-600">{fmtDue(m.due)}</span>
+                    <button
+                      onClick={() => deleteMilestone(m.id)}
+                      disabled={busy}
+                      aria-label={`Delete milestone "${m.title}"`}
+                      className="text-slate-400 hover:text-red-700"
+                    >
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -178,7 +241,15 @@ export default function MissionDashboard({
                     <span className={t.status === 'done' ? 'text-slate-500 line-through' : 'text-slate-900'}>
                       {t.title}
                     </span>
-                    {t.assignee && <span className="ml-auto text-xs text-slate-600">{t.assignee}</span>}
+                    {t.assignee && <span className="text-xs text-slate-600">{t.assignee}</span>}
+                    <button
+                      onClick={() => deleteTask(t.id)}
+                      disabled={busy}
+                      aria-label={`Delete task "${t.title}"`}
+                      className="ml-auto text-slate-400 hover:text-red-700"
+                    >
+                      ✕
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -204,7 +275,12 @@ export default function MissionDashboard({
                 </div>
               ))}
             </dl>
-            <SectionTitle className="pt-2">Success measures</SectionTitle>
+            <div className="flex items-center justify-between pt-2">
+              <SectionTitle>Success measures</SectionTitle>
+              <Btn variant="subtle" onClick={() => setShowMeasure(true)} disabled={busy}>
+                + Add
+              </Btn>
+            </div>
             {mission.successMeasures.length === 0 ? (
               <p className="text-sm text-slate-600">No success measures defined yet.</p>
             ) : (
@@ -215,7 +291,8 @@ export default function MissionDashboard({
                       <th className="py-2 pr-2">Measure</th>
                       <th className="py-2 pr-2">Baseline</th>
                       <th className="py-2 pr-2">Target</th>
-                      <th className="py-2">Method</th>
+                      <th className="py-2 pr-2">Method</th>
+                      <th className="py-2"><span className="sr-only">Delete</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -227,7 +304,17 @@ export default function MissionDashboard({
                         </td>
                         <td className="py-2 pr-2 text-slate-800">{s.baseline || '—'}</td>
                         <td className="py-2 pr-2 text-slate-800">{s.target || '—'}</td>
-                        <td className="py-2 text-slate-600">{s.method || '—'}</td>
+                        <td className="py-2 pr-2 text-slate-600">{s.method || '—'}</td>
+                        <td className="py-2">
+                          <button
+                            onClick={() => deleteMeasure(s.id)}
+                            disabled={busy}
+                            aria-label={`Delete measure "${s.name}"`}
+                            className="text-slate-400 hover:text-red-700"
+                          >
+                            ✕
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -342,6 +429,40 @@ export default function MissionDashboard({
           }}
         />
       )}
+      {showMeasure && (
+        <AddItemModal
+          title="Add success measure"
+          fields={[
+            { key: 'name', label: 'Measure name', required: true },
+            { key: 'baseline', label: 'Baseline' },
+            { key: 'target', label: 'Target' },
+            { key: 'unit', label: 'Unit (e.g. %, ms, count)' },
+            { key: 'method', label: 'How it will be measured' },
+          ]}
+          onClose={() => setShowMeasure(false)}
+          onSave={async (vals) => {
+            await patchMission(missionId, {
+              successMeasures: [
+                ...mission.successMeasures,
+                { id: '', name: vals.name, baseline: vals.baseline || '', target: vals.target || '', unit: vals.unit || '', method: vals.method || '' },
+              ],
+            });
+            setShowMeasure(false);
+            reload();
+          }}
+        />
+      )}
+      {showContributor && (
+        <AddContributorModal
+          onClose={() => setShowContributor(false)}
+          onSaved={() => {
+            setShowContributor(false);
+            reload();
+            onChanged?.();
+          }}
+          save={(actor, role) => addContributor(missionId, { actor, role })}
+        />
+      )}
     </div>
   );
 }
@@ -419,6 +540,67 @@ function EditMissionModal({
           </Btn>
           <Btn variant="primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save changes'}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AddContributorModal({
+  onClose,
+  onSaved,
+  save,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+  save: (actor: string, role: Role) => Promise<Mission>;
+}) {
+  const [actor, setActor] = useState('');
+  const [role, setRole] = useState<Role>('editor');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!actor.trim()) {
+      setError('Contributor name or id is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await save(actor.trim(), role);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title="Add contributor" onClose={onClose}>
+      <div className="space-y-4">
+        {error && <ErrorState message={error} />}
+        <Field label="Contributor (name or id)">
+          <TextInput value={actor} onChange={(e) => setActor(e.target.value)} placeholder="e.g. ada" />
+        </Field>
+        <Field label="Role">
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as Role)}
+            className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="owner">owner — full control</option>
+            <option value="editor">editor — can change mission content</option>
+            <option value="viewer">viewer — read-only</option>
+          </select>
+        </Field>
+        <div className="flex justify-end gap-2">
+          <Btn variant="ghost" onClick={onClose}>
+            Cancel
+          </Btn>
+          <Btn variant="primary" onClick={submit} disabled={saving}>
+            {saving ? 'Saving…' : 'Add'}
           </Btn>
         </div>
       </div>

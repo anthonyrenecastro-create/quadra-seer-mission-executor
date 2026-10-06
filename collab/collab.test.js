@@ -162,6 +162,15 @@ describe('auth', () => {
     expect((await get(`/missions/${missionId}`, { token: 'tok-stranger' })).status).toBe(403);
     setTokenMode();
   });
+
+  it('owner can change a role and remove a contributor', async () => {
+    const changed = await post(`/missions/${missionId}/contributors`, { actor: 'u-viewer', role: 'editor' }, { token: 'tok-owner' });
+    expect(changed.status).toBe(200);
+    expect(changed.json.mission.contributors.find((c) => c.actor === 'u-viewer').role).toBe('editor');
+    const removed = await del(`/missions/${missionId}/contributors/u-viewer`, { token: 'tok-owner' });
+    expect(removed.status).toBe(200);
+    expect(removed.json.mission.contributors.some((c) => c.actor === 'u-viewer')).toBe(false);
+  });
 });
 
 describe('evidence', () => {
