@@ -34,3 +34,6 @@ quadra-seer-intelligence.zip
 *.sw?
 .env.local
 .env*.local
+
+# QuadraSeer collaboration layer runtime data
+collab-data/

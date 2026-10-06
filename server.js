@@ -26,7 +26,7 @@ const corsOptions = {
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     maxAge: 3600 // Preflight cache duration in seconds
 };
@@ -205,6 +205,11 @@ app.post('/api/summarize', async (req, res) => {
     }
 });
 
+
+// --- QuadraSeer collaboration layer (missions, evidence, branches, experiments, exchange, agents) ---
+// Preserved-core rule: this mounts a self-contained module; existing routes above are untouched.
+import { mountCollab } from './collab/index.js';
+mountCollab(app);
 
 // --- Server Start ---
 app.listen(port, () => {
