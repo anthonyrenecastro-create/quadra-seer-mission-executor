@@ -18,6 +18,12 @@ coverage
 .DS_Store
 flask_session
 *.bin
+# Never bake runtime secrets or local state into images
+.env
+.env.local
+.env*.local
+collab-data/
+collab-data
 *.pt
 *.pth
 *.onnx

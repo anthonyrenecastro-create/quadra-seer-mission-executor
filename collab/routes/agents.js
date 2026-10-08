@@ -118,7 +118,16 @@ export async function runAgentTool(store, agent, { tool, input, actor, mission, 
       run.output = { created: ev.id, title: ev.title, claimStatus: ev.claimStatus };
       logActivity(store, { missionId: agent.missionId, actor, type: 'evidence.added', summary: `Agent ${agent.name} wrote evidence: ${ev.title}`, ref: { kind: 'evidence', id: ev.id } });
     } else if (tool === 'hrm.simulate') {
-      const sim = await runHrmSimulation({ steps: inp.steps || 50, seed: inp.seed ?? null, state_dim: inp.state_dim ?? null });
+      // Enforce the agent's recorded maxRuntimeMs (previously stored but ignored).
+      const maxRuntimeMs = agent.limits && Number(agent.limits.maxRuntimeMs) > 0
+        ? Number(agent.limits.maxRuntimeMs)
+        : undefined;
+      const sim = await runHrmSimulation({
+        steps: inp.steps || 50,
+        seed: inp.seed ?? null,
+        state_dim: inp.state_dim ?? null,
+        timeoutMs: maxRuntimeMs,
+      });
       if (!sim.available) {
         run.status = 'error';
         run.output = { available: false, reason: sim.reason };

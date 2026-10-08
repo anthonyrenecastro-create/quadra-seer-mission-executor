@@ -9,9 +9,13 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TIMEOUT_MS = 120000;
+// Phase 2 hardening: user-controlled simulation cost is bounded.
+export const MAX_HRM_STEPS = 500; // hard cap on user-supplied steps
+const MAX_CONCURRENT_HRM = 4; // max simultaneous python3 spawns; beyond this we shed load
 
 let detectCache = null;
 let detectAt = 0;
+let activeHrmRuns = 0;
 
 function runPython(args, env, timeoutMs) {
   return new Promise((resolve) => {
@@ -49,7 +53,8 @@ try:
     adapter = HRMAdapter(cfg)
     if job.get('seed') is not None:
         adapter.reset(seed=int(job['seed']))
-    steps = max(1, int(job.get('steps', 50)))
+    # Defense in depth: clamp server-side even though Node clamps first.
+    steps = min(max(1, int(job.get('steps', 50))), 500)
     out = adapter.run(steps=steps)
     snap = out.get('snapshot', {})
     tl = out.get('timeline') or []
@@ -58,15 +63,30 @@ except Exception as e:
     print(json.dumps({'ok': False, 'error': '%s: %s' % (type(e).__name__, e)}))
 `;
 
-// runHrmSimulation({ steps, seed, state_dim }) -> result object.
+// runHrmSimulation({ steps, seed, state_dim, timeoutMs }) -> result object.
 // Always { available: bool, ... }. Success adds kind: 'internal-simulation'.
-export async function runHrmSimulation({ steps = 50, seed = null, state_dim = null } = {}) {
+// steps is clamped to MAX_HRM_STEPS; concurrent spawns are capped at
+// MAX_CONCURRENT_HRM (excess load is shed, not queued); timeoutMs lets callers
+// enforce per-agent maxRuntimeMs.
+export async function runHrmSimulation({ steps = 50, seed = null, state_dim = null, timeoutMs = TIMEOUT_MS } = {}) {
   const det = await detectPython();
   if (!det.python) return { available: false, reason: 'python3 not found on PATH' };
   if (!det.hrm) return { available: false, reason: 'hrm package not importable from repo root' };
 
-  const job = { steps, seed, state_dim };
-  const r = await runPython(['-c', HELPER], { ...process.env, HRM_JOB_JSON: JSON.stringify(job) }, TIMEOUT_MS);
+  const clampedSteps = Math.min(Math.max(1, parseInt(steps, 10) || 50), MAX_HRM_STEPS);
+  if (activeHrmRuns >= MAX_CONCURRENT_HRM) {
+    return { available: false, reason: `hrm busy (${activeHrmRuns} running), try again later` };
+  }
+  const effectiveTimeout = Math.min(Math.max(1000, timeoutMs || TIMEOUT_MS), TIMEOUT_MS);
+
+  const job = { steps: clampedSteps, seed, state_dim };
+  activeHrmRuns += 1;
+  let r;
+  try {
+    r = await runPython(['-c', HELPER], { ...process.env, HRM_JOB_JSON: JSON.stringify(job) }, effectiveTimeout);
+  } finally {
+    activeHrmRuns -= 1;
+  }
   if (!r.ok) {
     const msg = r.error && r.error.killed ? 'hrm simulation timed out' : String((r.error && r.error.message) || r.stderr || 'unknown error');
     return { available: false, reason: `hrm subprocess failed: ${msg}`.slice(0, 500) };
@@ -85,7 +105,7 @@ export async function runHrmSimulation({ steps = 50, seed = null, state_dim = nu
     kind: 'internal-simulation',
     engine: 'hrm',
     label: 'internal-simulation',
-    steps: Math.max(1, parseInt(steps, 10) || 50),
+    steps: clampedSteps,
     seed: seed === null || seed === undefined ? null : seed,
     snapshot: parsed.snapshot,
     timelineLength: parsed.timelineLength,

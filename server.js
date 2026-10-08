@@ -75,6 +75,31 @@ const paidLimiter = rateLimit({
 // In local dev (COLLAB_AUTH=disabled) this passes through as local-owner.
 const paidEndpointGuards = [authMiddleware, paidLimiter];
 
+// JSON request logging: one structured line per request, safe for aggregation.
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        console.log(JSON.stringify({
+            t: new Date().toISOString(),
+            m: req.method,
+            p: req.path,
+            s: res.statusCode,
+            ms: Date.now() - start,
+        }));
+    });
+    next();
+});
+
+// Fail fast: a production boot without token auth is never what you want.
+if (process.env.NODE_ENV === 'production' && authMode() !== 'token') {
+    console.error(
+        '[fatal] NODE_ENV=production requires token auth mode ' +
+        '(COLLAB_AUTH=token, or unset which defaults to token). ' +
+        'Refusing to boot world-writable.',
+    );
+    process.exit(1);
+}
+
 // --- API Key and Service Initialization ---
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
 if (!geminiApiKey) {
@@ -96,7 +121,8 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
+    // Liveness: the process is alive. Dependency-free and fast by design.
+    res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
 });
 
 
@@ -281,7 +307,53 @@ app.post('/api/summarize', ...paidEndpointGuards, async (req, res) => {
 // --- QuadraSeer collaboration layer (missions, evidence, branches, experiments, exchange, agents) ---
 // Preserved-core rule: this mounts a self-contained module; existing routes above are untouched.
 import { mountCollab } from './collab/index.js';
-mountCollab(app);
+import { detectPython } from './collab/adapters/hrm.js';
+import fs from 'node:fs';
+const { store: collabStore } = mountCollab(app);
+
+// Fail fast on corrupt store: load() quarantines the bad file, then we exit
+// so the supervisor restarts us into a visible crash loop instead of serving
+// half-dead. Restore from a snapshot to recover (see docs/BACKUP_RUNBOOK.md).
+try {
+  collabStore.load();
+} catch (e) {
+  console.error('[fatal] collab store failed to load:', e && e.message ? e.message : e);
+  process.exit(1);
+}
+
+// Readiness: can this instance serve traffic? 200 when ready, 503 when not.
+// Gates on the store loading cleanly (corrupt files fail boot loudly in
+// Phase 2) and the data dir being writable. Python/HRM is reported but does
+// not gate readiness — the API degrades gracefully without it.
+app.get('/ready', async (_req, res) => {
+    const checks = {};
+    let ready = true;
+    try {
+        collabStore.load();
+        checks.store = 'ok';
+    } catch (e) {
+        ready = false;
+        const msg = String((e && e.message) || e).slice(0, 200);
+        checks.store = `error: ${msg}`;
+        console.error(`[ready] store check failed: ${msg}`);
+    }
+    try {
+        fs.accessSync(collabStore.dataDir, fs.constants.W_OK);
+        checks.dataDir = 'writable';
+    } catch {
+        ready = false;
+        checks.dataDir = 'not writable';
+    }
+    try {
+        const det = await detectPython().catch(() => ({ python: false, hrm: false }));
+        checks.python = det.python ? 'ok' : 'unavailable';
+        checks.hrm = det.hrm ? 'ok' : 'unavailable';
+    } catch {
+        checks.python = 'check failed';
+        checks.hrm = 'check failed';
+    }
+    res.status(ready ? 200 : 503).json({ ready, checks });
+});
 
 // --- Server Start ---
 const server = app.listen(port, () => {

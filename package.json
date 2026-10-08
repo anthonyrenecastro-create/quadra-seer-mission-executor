@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "collab:seed": "node collab/seed.js"
+    "collab:seed": "node collab/seed.js",
+    "collab:snapshot": "node collab/snapshot.js"
   },
   "keywords": [],
   "author": "",
