@@ -6,15 +6,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "atlantean_core"))
 sys.path.insert(0, str(ROOT))
 
-from cold_memory import ColdMemoryItem
-from hot_memory import AtlanteanHotMemory
-from vector_cold_memory import VectorColdMemory
+try:
+    import torch
+    from cold_memory import ColdMemoryItem
+    from hot_memory import AtlanteanHotMemory
+    from vector_cold_memory import VectorColdMemory
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover - torch not installed
+    _TORCH_AVAILABLE = False
 
 
 class FakeRedis:
@@ -37,6 +41,7 @@ class FakeRedis:
         return [k for k in self._store if k == pattern]
 
 
+@unittest.skipUnless(_TORCH_AVAILABLE, 'torch not installed')
 class TestMemoryPersistence(unittest.TestCase):
     def test_hot_memory_save_load_roundtrip(self):
         hot = AtlanteanHotMemory.initialize(grid_size=(8, 8), device_id="test-device")

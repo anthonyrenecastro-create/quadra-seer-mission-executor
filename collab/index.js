@@ -37,9 +37,15 @@ export function mountCollab(app, opts = {}) {
   app.use('/api/collab', createContributionsRouter(store));
   app.use('/api/collab', createAgentsRouter(store));
 
-  // Demo seed. In disabled mode the local owner may seed; in token mode any
-  // authenticated actor may seed (they become owner of the demo missions).
+  // Demo seed. Destructive write: in token mode (production) it requires
+  // explicit opt-in via COLLAB_ALLOW_SEED=1. In disabled mode (local dev)
+  // the local owner may seed freely.
   app.post('/api/collab/seed/demo', async (req, res) => {
+    if (authMode() === 'token' && process.env.COLLAB_ALLOW_SEED !== '1') {
+      return res.status(403).json({
+        error: 'demo seeding is disabled in token mode (set COLLAB_ALLOW_SEED=1 to enable)',
+      });
+    }
     try {
       const out = await seedDemo(store, req.actor);
       res.status(out.skipped ? 200 : 201).json(out);
@@ -55,6 +61,13 @@ export function mountCollab(app, opts = {}) {
 
   // eslint-disable-next-line no-unused-vars
   app.use('/api/collab', (err, req, res, next) => {
+    // Never swallow errors silently: log with request context, then respond.
+    console.error('[collab] request failed:', {
+      method: req.method,
+      path: req.path,
+      actor: req.actor && req.actor.id,
+      error: err && err.stack ? err.stack : String(err),
+    });
     // JSON body parse errors etc.
     if (err && err.type === 'entity.parse.failed') {
       return res.status(400).json({ error: 'invalid JSON body' });

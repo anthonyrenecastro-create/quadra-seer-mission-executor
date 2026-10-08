@@ -360,6 +360,10 @@ export async function seedDemo(store, actor) {
 // Runnable: node collab/seed.js (creates its own store instance).
 const isMain = !!process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
+  if (process.env.NODE_ENV === 'production' && process.env.COLLAB_ALLOW_SEED !== '1') {
+    console.error('Refusing to seed: NODE_ENV=production without COLLAB_ALLOW_SEED=1.');
+    process.exit(1);
+  }
   const store = createStore();
   store.load();
   const out = await seedDemo(store);

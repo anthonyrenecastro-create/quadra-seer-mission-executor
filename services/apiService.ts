@@ -1,6 +1,5 @@
 
 import { Conversation, Message } from '../types';
-import { getSummary as fetchSummaryFromLLM } from './edenAiService';
 const LEGACY_API_ERROR =
   'Legacy local conversation persistence is deprecated. Use Atlantean session + snapshot APIs from services/atlanteanService.ts.';
 
@@ -30,5 +29,18 @@ export const shareConversation = async (_conversation: Conversation): Promise<{ 
 };
 
 export const getSummary = async (messages: Message[]): Promise<string> => {
-    return await fetchSummaryFromLLM(messages);
+    // Phase 1 hardening: summaries are generated server-side (/api/summarize)
+    // so the browser never touches an API key.
+    try {
+        const res = await fetch('/api/summarize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages }),
+        });
+        if (!res.ok) return "Could not generate a summary at this time.";
+        const data = await res.json();
+        return data.summary || "Could not generate a summary at this time.";
+    } catch {
+        return "Could not generate a summary at this time.";
+    }
 };
