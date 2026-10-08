@@ -439,6 +439,37 @@ function Inspector({
   const [relTo, setRelTo] = useState('');
   const [relType, setRelType] = useState<RelationType>('supports');
   const [relNote, setRelNote] = useState('');
+  const [editMode, setEditMode] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editSource, setEditSource] = useState('');
+  const [editAuthor, setEditAuthor] = useState('');
+
+  const startEdit = () => {
+    if (!item) return;
+    setEditTitle(item.title);
+    setEditSource(item.source || '');
+    setEditAuthor(item.author || '');
+    setEditMode(true);
+  };
+
+  const saveEdit = async () => {
+    if (!editTitle.trim()) {
+      setError('Title is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await patchEvidence(evidenceId, { title: editTitle.trim(), source: editSource.trim(), author: editAuthor.trim() });
+      setEditMode(false);
+      detail.reload();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const item = detail.data;
   const outgoing = relations.filter((r) => r.from === evidenceId);
@@ -511,17 +542,51 @@ function Inspector({
             </div>
             <h3 className="mt-2 text-base font-bold text-slate-900">{item.title}</h3>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close inspector"
-            className="rounded-lg px-2 py-1 text-lg leading-none text-slate-600 hover:bg-stone-100"
-          >
-            ×
-          </button>
+          <div className="flex items-center gap-1">
+            {!editMode && (
+              <button
+                type="button"
+                onClick={startEdit}
+                aria-label="Edit evidence"
+                className="rounded-lg px-2 py-1 text-sm text-slate-600 hover:bg-stone-100"
+              >
+                Edit
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close inspector"
+              className="rounded-lg px-2 py-1 text-lg leading-none text-slate-600 hover:bg-stone-100"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         {error && <ErrorState message={error} />}
+
+        {editMode && (
+          <div className="space-y-3 rounded-lg border border-stone-200 p-3">
+            <Field label="Title">
+              <TextInput value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+            </Field>
+            <Field label="Source">
+              <TextInput value={editSource} onChange={(e) => setEditSource(e.target.value)} />
+            </Field>
+            <Field label="Author">
+              <TextInput value={editAuthor} onChange={(e) => setEditAuthor(e.target.value)} />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setEditMode(false)} disabled={saving}>
+                Cancel
+              </Btn>
+              <Btn variant="primary" onClick={saveEdit} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </Btn>
+            </div>
+          </div>
+        )}
 
         <dl className="space-y-1.5 text-sm">
           <div className="flex gap-2"><dt className="w-24 shrink-0 font-semibold text-slate-700">Source</dt><dd className="text-slate-900">{item.source || '—'}</dd></div>

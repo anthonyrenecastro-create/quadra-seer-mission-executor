@@ -1,7 +1,12 @@
 # QuadraSeer Collaboration Layer — Working features vs. limitations
 
-Verified 2026-10-06. Test suite: 43/43 vitest green. Existing Python core: untouched
+Verified 2026-10-06. Test suite: 44/44 vitest green. Existing Python core: untouched
 (4 pre-existing `torch` import errors in `tests/run_validation.py`, identical on the clean tree).
+
+GUI parity update (2026-10-06): the interface now surfaces every backend function —
+contributor add/remove/role-change, success-measure add/delete, milestone/task delete,
+evidence title/source/author editing in the inspector, and agent branch assignment with
+scope display on cards and detail view.
 
 ## Working
 

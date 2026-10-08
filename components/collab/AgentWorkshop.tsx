@@ -10,6 +10,7 @@ import {
   getAgent,
   getAgentRuns,
   listAgents,
+  listBranches,
   listEvidence,
   packageAgent,
   patchAgent,
@@ -54,8 +55,10 @@ const DEPLOY_TONES: Record<string, 'slate' | 'amber' | 'green'> = {
 
 export default function AgentWorkshop({ missionId, health }: { missionId: string; health: Health | null }) {
   const agents = useCollab(() => listAgents(missionId), [missionId]);
+  const branches = useCollab(() => listBranches(missionId), [missionId]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const branchList = branches.data ?? [];
 
   if (agents.loading) return <LoadingState label="Loading agents…" />;
   if (agents.error) return <ErrorState message={agents.error} onRetry={agents.reload} />;
@@ -106,6 +109,7 @@ export default function AgentWorkshop({ missionId, health }: { missionId: string
               <p className="mt-1 line-clamp-2 text-sm text-slate-600">{a.purpose}</p>
               <p className="mt-2 text-xs text-slate-600">
                 Tools: {a.allowedTools.join(', ') || 'none'} · {a.runs.length} runs
+                {a.branchId && ` · branch: ${branchList.find((b) => b.id === a.branchId)?.name ?? a.branchId}`}
               </p>
             </button>
           ))}
@@ -125,6 +129,7 @@ export default function AgentWorkshop({ missionId, health }: { missionId: string
       {showCreate && (
         <AgentFormModal
           missionId={missionId}
+          branches={branchList}
           onClose={() => setShowCreate(false)}
           onSaved={() => {
             setShowCreate(false);
@@ -152,6 +157,7 @@ function AgentDetail({
   const detail = useCollab(() => getAgent(agentId), [agentId]);
   const runs = useCollab(() => getAgentRuns(agentId), [agentId]);
   const evidence = useCollab(() => listEvidence(missionId), [missionId]);
+  const branches = useCollab(() => listBranches(missionId), [missionId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
@@ -224,6 +230,10 @@ function AgentDetail({
           <div className="space-y-2 text-sm">
             <SectionTitle>Capabilities</SectionTitle>
             <p className="text-slate-800"><span className="font-semibold">Allowed tools:</span> {a.allowedTools.join(', ') || 'none'}</p>
+            <p className="text-slate-800">
+              <span className="font-semibold">Branch scope:</span>{' '}
+              {a.branchId ? (branches.data ?? []).find((b) => b.id === a.branchId)?.name ?? a.branchId : 'Mission-wide'}
+            </p>
             <p className="text-slate-800">
               <span className="font-semibold">Permissions:</span> read {a.permissions.read ? '✓' : '✗'} · write{' '}
               {a.permissions.write ? '✓' : '✗'} · execute {a.permissions.execute ? '✓' : '✗'}
@@ -367,6 +377,7 @@ function AgentDetail({
             missionId={missionId}
             initial={a}
             evidenceIds={(evidence.data ?? []).map((e) => e.id)}
+            branches={branches.data ?? []}
             onClose={() => setShowEdit(false)}
             onSaved={() => {
               setShowEdit(false);
@@ -384,17 +395,20 @@ function AgentFormModal({
   missionId,
   initial,
   evidenceIds = [],
+  branches = [],
   onClose,
   onSaved,
 }: {
   missionId: string;
   initial?: Agent;
   evidenceIds?: string[];
+  branches?: { id: string; name: string }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [purpose, setPurpose] = useState(initial?.purpose ?? '');
+  const [branchId, setBranchId] = useState(initial?.branchId ?? '');
   const [instructions, setInstructions] = useState(initial?.instructions ?? '');
   const [tools, setTools] = useState<string[]>(initial?.allowedTools ?? ['evidence.read']);
   const [canRead, setCanRead] = useState(initial?.permissions.read ?? true);
@@ -438,6 +452,7 @@ function AgentFormModal({
       name: name.trim(),
       purpose: purpose.trim(),
       instructions: instructions.trim(),
+      branchId: branchId || undefined,
       allowedTools: tools,
       permissions: { read: canRead, write: canWrite, execute: canExecute },
       allowedSources: sources.split(',').map((s) => s.trim()).filter(Boolean),
@@ -467,6 +482,16 @@ function AgentFormModal({
             <TextInput value={purpose} onChange={(e) => setPurpose(e.target.value)} />
           </Field>
         </div>
+        <Field label="Perspective branch (optional)">
+          <Select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">Mission-wide (no branch)</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <Field label="Instructions">
           <TextArea value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="What this agent should do, in plain language." />
         </Field>

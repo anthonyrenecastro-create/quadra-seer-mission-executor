@@ -388,6 +388,10 @@ export const archiveMission = (id: string) =>
   api<Mission>(`/missions/${id}/archive`, { method: 'POST' });
 export const reopenMission = (id: string) =>
   api<Mission>(`/missions/${id}/reopen`, { method: 'POST' });
+export const addContributor = (id: string, body: { actor: string; role: Role }) =>
+  api<Mission>(`/missions/${id}/contributors`, { method: 'POST', body });
+export const removeContributor = (id: string, actorId: string) =>
+  api<Mission>(`/missions/${id}/contributors/${encodeURIComponent(actorId)}`, { method: 'DELETE' });
 export const getDashboard = (id: string) => api<Dashboard>(`/missions/${id}/dashboard`);
 export const getActivity = (id: string) => api<ActivityItem[]>(`/missions/${id}/activity`);
 export const getAttention = (id: string) => api<Attention>(`/missions/${id}/attention`);
