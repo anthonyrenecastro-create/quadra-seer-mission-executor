@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "collab:seed": "node collab/seed.js"
+    "collab:seed": "node collab/seed.js",
+    "collab:snapshot": "node collab/snapshot.js"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
     "jszip": "^3.10.1",
     "mammoth": "^1.8.0",
     "node-fetch": "^3.3.2",

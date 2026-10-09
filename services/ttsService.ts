@@ -1,4 +1,7 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+// NOTE (Phase 1 hardening): the browser must never hold an API key.
+// TTS is proxied through the backend (/api/tts/gemini), which uses the
+// server-side key. The previous direct-to-Gemini call (VITE_GEMINI_API_KEY)
+// has been removed.
 
 export const GEMINI_TTS_VOICES = [
     'Zephyr',
@@ -131,33 +134,17 @@ export const textToSpeechStream = async (
         const speechText = prepareSpeechText(text);
         if (!speechText) return null;
 
-        const apiKey =
-            (import.meta as any).env?.VITE_GEMINI_API_KEY ||
-            (process as any)?.env?.API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not defined");
-        
-        const ai = new GoogleGenAI({ apiKey });
-        
-        const prompt = `Read this with a professional, scientific, and calm tone: "${speechText}"`;
-
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: prompt }] }],
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName },
-                    },
-                },
-            },
+        const res = await fetch('/api/tts/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: speechText, voiceName }),
         });
-
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        return base64Audio || null;
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.audio || null;
 
     } catch (error) {
         console.error("[TTS Service] Error:", error);
-        return null; 
+        return null;
     }
 };

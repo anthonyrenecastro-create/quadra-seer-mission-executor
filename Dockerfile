@@ -34,12 +34,21 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 
-# Final stage for app image
-FROM nginx
+# Final stage: nginx edge proxy (serves the frontend, proxies /api/*).
+# Pinned tag; runs as non-root on unprivileged port 8080.
+FROM nginx:1.27.2-alpine
+
+# Production proxy config (replaces the image default).
+COPY nginx.prod.conf /etc/nginx/nginx.conf
 
 # Copy built application
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Start the server by default, this can be overwritten at runtime
-EXPOSE 80
+# Writable dirs for the non-root nginx user.
+RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /var/run && \
+    chmod -R 755 /var/cache/nginx /var/log/nginx /var/run
+USER nginx
+
+# 8080: unprivileged port (non-root can't bind 80). Map host 80->8080 in compose.
+EXPOSE 8080
 CMD [ "/usr/sbin/nginx", "-g", "daemon off;" ]

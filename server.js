@@ -2,15 +2,30 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from "@google/genai";
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import 'express-async-errors';
+import { GoogleGenAI, Modality } from "@google/genai";
 import fetch from 'node-fetch';
+import { authMiddleware, authBootWarnings, authMode } from './collab/auth.js';
 
 // Load local-first environment files so npm start works without manual mapping.
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
+// --- Crash safety: never die silently. Log fatally and exit so the
+// supervisor (systemd/docker/compose) restarts us instead of serving half-dead.
+process.on('unhandledRejection', (reason) => {
+    console.error('[fatal] unhandledRejection:', reason);
+    process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[fatal] uncaughtException:', err);
+    process.exit(1);
+});
+
 const app = express();
-const port = 3001;
+const port = Number(process.env.PORT) || 3001;
 
 // --- CORS Configuration ---
 // Restrict CORS to specific origins (development and production)
@@ -32,8 +47,58 @@ const corsOptions = {
 };
 
 // --- Middleware ---
+app.use(helmet()); // security headers: HSTS, CSP, frame-ancestors, MIME-sniffing, etc.
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Allow larger payloads for file uploads
+
+// General API rate limit: 600 requests / 15 min per IP.
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' },
+});
+app.use('/api/', apiLimiter);
+
+// Stricter limit for paid-model endpoints (billed per call): 60 / 15 min per IP.
+// Per-user quotas arrive with real identity (Phase 3); this is the Phase 1 floor.
+const paidLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Rate limit exceeded for AI endpoints, please try again later.' },
+});
+
+// Paid LLM endpoints require collaboration auth (fail-closed when COLLAB_AUTH is unset).
+// In local dev (COLLAB_AUTH=disabled) this passes through as local-owner.
+const paidEndpointGuards = [authMiddleware, paidLimiter];
+
+// JSON request logging: one structured line per request, safe for aggregation.
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        console.log(JSON.stringify({
+            t: new Date().toISOString(),
+            m: req.method,
+            p: req.path,
+            s: res.statusCode,
+            ms: Date.now() - start,
+        }));
+    });
+    next();
+});
+
+// Fail fast: a production boot without token auth is never what you want.
+if (process.env.NODE_ENV === 'production' && authMode() !== 'token') {
+    console.error(
+        '[fatal] NODE_ENV=production requires token auth mode ' +
+        '(COLLAB_AUTH=token, or unset which defaults to token). ' +
+        'Refusing to boot world-writable.',
+    );
+    process.exit(1);
+}
 
 // --- API Key and Service Initialization ---
 const geminiApiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
@@ -56,7 +121,8 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
+    // Liveness: the process is alive. Dependency-free and fast by design.
+    res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
 });
 
 
@@ -68,7 +134,7 @@ app.get('/health', (_req, res) => {
  * through the Atlantean memory/field system, violating the stateless-LLM
  * principle. Kept for backward compatibility only.
  */
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', ...paidEndpointGuards, async (req, res) => {
     res.setHeader('Deprecation', 'true');
     res.setHeader('Link', '</api/atlantean/query>; rel="successor-version"');
     console.warn('[DEPRECATED] /api/chat called — migrate callers to /api/atlantean/query');
@@ -143,7 +209,7 @@ app.post('/api/chat', async (req, res) => {
 /**
  * Endpoint for Text-to-Speech using ElevenLabs.
  */
-app.post('/api/tts', async (req, res) => {
+app.post('/api/tts', ...paidEndpointGuards, async (req, res) => {
     const { text } = req.body;
     const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Example voice
     const apiUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
@@ -184,9 +250,41 @@ app.post('/api/tts', async (req, res) => {
 });
 
 /**
+ * Server-side Gemini TTS. Exists so the browser never needs an API key:
+ * the frontend calls this instead of Gemini directly. Returns { audio: base64PCM }.
+ */
+app.post('/api/tts/gemini', ...paidEndpointGuards, async (req, res) => {
+    const { text, voiceName } = req.body || {};
+    if (!text || typeof text !== 'string' || text.length > 5000) {
+        return res.status(400).json({ error: 'text is required (max 5000 chars).' });
+    }
+    try {
+        const prompt = `Read this with a professional, scientific, and calm tone: "${text}"`;
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: [{ parts: [{ text: prompt }] }],
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' },
+                    },
+                },
+            },
+        });
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) return res.status(502).json({ error: 'TTS generation returned no audio.' });
+        res.json({ audio: base64Audio });
+    } catch (error) {
+        console.error("Error in /api/tts/gemini:", error);
+        res.status(500).json({ error: 'Failed to generate speech.' });
+    }
+});
+
+/**
  * Endpoint for conversation summarization (mocked).
  */
-app.post('/api/summarize', async (req, res) => {
+app.post('/api/summarize', ...paidEndpointGuards, async (req, res) => {
     const { messages } = req.body;
     
     if (messages.length < 4) {
@@ -209,9 +307,66 @@ app.post('/api/summarize', async (req, res) => {
 // --- QuadraSeer collaboration layer (missions, evidence, branches, experiments, exchange, agents) ---
 // Preserved-core rule: this mounts a self-contained module; existing routes above are untouched.
 import { mountCollab } from './collab/index.js';
-mountCollab(app);
+import { detectPython } from './collab/adapters/hrm.js';
+import fs from 'node:fs';
+const { store: collabStore } = mountCollab(app);
+
+// Fail fast on corrupt store: load() quarantines the bad file, then we exit
+// so the supervisor restarts us into a visible crash loop instead of serving
+// half-dead. Restore from a snapshot to recover (see docs/BACKUP_RUNBOOK.md).
+try {
+  collabStore.load();
+} catch (e) {
+  console.error('[fatal] collab store failed to load:', e && e.message ? e.message : e);
+  process.exit(1);
+}
+
+// Readiness: can this instance serve traffic? 200 when ready, 503 when not.
+// Gates on the store loading cleanly (corrupt files fail boot loudly in
+// Phase 2) and the data dir being writable. Python/HRM is reported but does
+// not gate readiness — the API degrades gracefully without it.
+app.get('/ready', async (_req, res) => {
+    const checks = {};
+    let ready = true;
+    try {
+        collabStore.load();
+        checks.store = 'ok';
+    } catch (e) {
+        ready = false;
+        const msg = String((e && e.message) || e).slice(0, 200);
+        checks.store = `error: ${msg}`;
+        console.error(`[ready] store check failed: ${msg}`);
+    }
+    try {
+        fs.accessSync(collabStore.dataDir, fs.constants.W_OK);
+        checks.dataDir = 'writable';
+    } catch {
+        ready = false;
+        checks.dataDir = 'not writable';
+    }
+    try {
+        const det = await detectPython().catch(() => ({ python: false, hrm: false }));
+        checks.python = det.python ? 'ok' : 'unavailable';
+        checks.hrm = det.hrm ? 'ok' : 'unavailable';
+    } catch {
+        checks.python = 'check failed';
+        checks.hrm = 'check failed';
+    }
+    res.status(ready ? 200 : 503).json({ ready, checks });
+});
 
 // --- Server Start ---
-app.listen(port, () => {
+const server = app.listen(port, () => {
     console.log(`Q.M.A.I. backend server listening on port ${port}`);
+    console.log(`[auth] collaboration API mode: ${authMode()}`);
+    for (const w of authBootWarnings()) console.warn(`[auth] WARNING: ${w}`);
 });
+
+// Graceful shutdown: finish in-flight requests instead of hard-killing them.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.on(sig, () => {
+        console.log(`[${sig}] shutting down gracefully…`);
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(1), 10000).unref();
+    });
+}

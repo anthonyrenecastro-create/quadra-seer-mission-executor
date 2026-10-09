@@ -2,14 +2,17 @@ import sys
 import unittest
 from pathlib import Path
 
-import torch
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "atlantean_core"))
 sys.path.insert(0, str(ROOT))
 
-from hot_memory import AtlanteanHotMemory
-from sync import AtlanteanSyncEngine, MergeStrategy, merge_hot_memories
+try:
+    import torch
+    from hot_memory import AtlanteanHotMemory
+    from sync import AtlanteanSyncEngine, MergeStrategy, merge_hot_memories
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover - torch not installed
+    _TORCH_AVAILABLE = False
 
 
 class FakeIdentity:
@@ -23,6 +26,7 @@ class FakeIdentity:
         return signature.startswith(b"sig:")
 
 
+@unittest.skipUnless(_TORCH_AVAILABLE, 'torch not installed')
 class TestSyncConflicts(unittest.TestCase):
     def test_simple_merge_preserves_plasticity(self):
         local = AtlanteanHotMemory.initialize(grid_size=(8, 8), device_id="local")

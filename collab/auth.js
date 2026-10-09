@@ -1,7 +1,9 @@
 // Auth: two modes via COLLAB_AUTH env.
-//   disabled (default) -> single local actor, everything allowed.
-//   token            -> require Authorization: Bearer <token>; actor resolved from
-//                       COLLAB_ACTORS JSON ({"token": {"id","name"}}) or COLLAB_API_TOKEN.
+//   token (default) -> require Authorization: Bearer <token>; actor resolved from
+//                      COLLAB_ACTORS JSON ({"token": {"id","name"}}) or COLLAB_API_TOKEN.
+//                      FAILS CLOSED: with no actors configured, every request 401s.
+//   disabled        -> single local actor, everything allowed. Explicit opt-in ONLY
+//                      for trusted local development (COLLAB_AUTH=disabled).
 //
 // Mission roles: contributors: [{ actor, role }] with owner | editor | viewer.
 // can(actor, action, mission) enforces the matrix below; routes return 403 { error }.
@@ -22,7 +24,35 @@ const MATRIX = {
 };
 
 export function authMode() {
-  return process.env.COLLAB_AUTH === 'token' ? 'token' : 'disabled';
+  // Fail closed: token mode unless explicitly disabled for local development.
+  // Set COLLAB_AUTH=disabled ONLY for trusted local dev — it makes the API world-writable.
+  return process.env.COLLAB_AUTH === 'disabled' ? 'disabled' : 'token';
+}
+
+// Human-readable boot warnings for the server startup banner. Returns string[].
+export function authBootWarnings() {
+  const warnings = [];
+  if (authMode() === 'disabled') {
+    warnings.push(
+      'COLLAB_AUTH=disabled: the collaboration API is WORLD-WRITABLE. ' +
+      'Local development only — never expose this to the internet.',
+    );
+  } else {
+    const hasActors = (() => {
+      try {
+        return Object.keys(JSON.parse(process.env.COLLAB_ACTORS || '{}')).length > 0;
+      } catch {
+        return false;
+      }
+    })();
+    if (!hasActors && !process.env.COLLAB_API_TOKEN) {
+      warnings.push(
+        'Token auth mode with no COLLAB_ACTORS or COLLAB_API_TOKEN configured: ' +
+        'every API request will 401 until you configure at least one actor.',
+      );
+    }
+  }
+  return warnings;
 }
 
 function actorsMap() {

@@ -4,13 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import torch
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "atlantean_core"))
 
-from hot_memory import AtlanteanHotMemory
-from sync import AtlanteanSyncEngine
+try:
+    import torch
+    from hot_memory import AtlanteanHotMemory
+    from sync import AtlanteanSyncEngine
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover - torch not installed
+    _TORCH_AVAILABLE = False
 
 try:
     from identity import AtlanteanIdentity, CRYPTO_AVAILABLE
@@ -19,6 +22,7 @@ except Exception:
     CRYPTO_AVAILABLE = False
 
 
+@unittest.skipUnless(_TORCH_AVAILABLE, 'torch not installed')
 class TestCognitiveLineagePersistence(unittest.TestCase):
     def test_evolving_cognitive_signatures_and_continuity(self):
         hot = AtlanteanHotMemory.initialize(grid_size=(8, 8), device_id="lineage-test")

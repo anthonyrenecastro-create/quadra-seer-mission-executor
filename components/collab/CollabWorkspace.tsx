@@ -151,9 +151,11 @@ export default function CollabWorkspace() {
           <Btn variant="ghost" onClick={() => setShowNew(true)}>
             New mission
           </Btn>
-          <Btn variant="subtle" onClick={handleSeed} disabled={seeding}>
-            {seeding ? 'Seeding…' : 'Load demo mission'}
-          </Btn>
+          {import.meta.env.DEV && (
+            <Btn variant="subtle" onClick={handleSeed} disabled={seeding}>
+              {seeding ? 'Seeding…' : 'Load demo mission'}
+            </Btn>
+          )}
         </div>
         {/* Tabs */}
         <nav aria-label="Workspace sections" className="mx-auto max-w-7xl px-4 sm:px-6">
@@ -195,9 +197,11 @@ export default function CollabWorkspace() {
             <Btn variant="primary" onClick={() => setShowNew(true)}>
               New mission
             </Btn>
-            <Btn variant="ghost" onClick={handleSeed} disabled={seeding}>
-              {seeding ? 'Seeding…' : 'Load demo mission'}
-            </Btn>
+            {import.meta.env.DEV && (
+              <Btn variant="ghost" onClick={handleSeed} disabled={seeding}>
+                {seeding ? 'Seeding…' : 'Load demo mission'}
+              </Btn>
+            )}
           </EmptyState>
         ) : (
           <div key={selected.id}>

@@ -526,3 +526,139 @@ describe('seed', () => {
     }
   });
 });
+
+describe('phase 2: store durability', () => {
+  function freshStore() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'collab-dur-'));
+    return { store: createStore({ dataDir: dir }), dir };
+  }
+
+  it('corrupt collection file is quarantined and load() throws (never silent empty state)', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set('missions', 'msn_test', { id: 'msn_test', title: 'x' });
+      fs.writeFileSync(path.join(dir, 'missions.json'), '{not valid json!!!');
+      const store2 = createStore({ dataDir: dir });
+      expect(() => store2.load()).toThrow(/corrupt/i);
+      const files = fs.readdirSync(dir);
+      expect(files.some((f) => f.startsWith('missions.json.corrupt.'))).toBe(true);
+      expect(files).not.toContain('missions.json'); // original moved, not overwritten
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('wrong-shaped collection file is treated as corrupt', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set('missions', 'msn_test', { id: 'msn_test', title: 'x' });
+      fs.writeFileSync(path.join(dir, 'missions.json'), '[]'); // valid JSON, wrong shape
+      const store2 = createStore({ dataDir: dir });
+      expect(() => store2.load()).toThrow(/corrupt|shape/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('snapshot / restore round-trip preserves data', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set('missions', 'msn_a', { id: 'msn_a', title: 'A' });
+      const dest = store.snapshot('test');
+      expect(fs.existsSync(path.join(dest, 'missions.json'))).toBe(true);
+      store.set('missions', 'msn_b', { id: 'msn_b', title: 'B' });
+      expect(store.get('missions', 'msn_b')).not.toBeNull();
+      const out = store.restoreSnapshot(path.basename(dest));
+      expect(out.restored).toBe(path.basename(dest));
+      expect(out.safetySnapshot).toMatch(/pre-restore/);
+      expect(store.get('missions', 'msn_b')).toBeNull();
+      expect(store.get('missions', 'msn_a')).not.toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('export / import round-trip; invalid payload rejected without applying', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set('missions', 'msn_a', { id: 'msn_a', title: 'A' });
+      const exported = store.exportAll();
+      expect(exported.format).toBe('quadra-seer-store-export/v1');
+      store.set('missions', 'msn_b', { id: 'msn_b', title: 'B' });
+      expect(() => store.importAll({ format: 'nope' })).toThrow(/invalid/i);
+      expect(store.get('missions', 'msn_b')).not.toBeNull(); // nothing applied
+      const out = store.importAll(exported);
+      expect(out.safetySnapshot).toMatch(/pre-import/);
+      expect(store.get('missions', 'msn_b')).toBeNull();
+      expect(store.get('missions', 'msn_a')).not.toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('pruneSnapshots keeps the N newest', () => {
+    const { store, dir } = freshStore();
+    try {
+      store.set('missions', 'msn_a', { id: 'msn_a', title: 'A' });
+      for (let i = 0; i < 3; i++) store.snapshot(`s${i}`);
+      expect(store.listSnapshots()).toHaveLength(3);
+      const pruned = store.pruneSnapshots(2);
+      expect(pruned).toBe(1);
+      expect(store.listSnapshots()).toHaveLength(2);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('phase 2: ids + hrm bounds', () => {
+  it('id() produces full 122-bit ids', async () => {
+    const { id } = await import('./ids.js');
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const v = id('ev');
+      expect(v).toMatch(/^ev_[0-9a-f]{32}$/);
+      seen.add(v);
+    }
+    expect(seen.size).toBe(200);
+  });
+
+  it('hrm steps are capped at MAX_HRM_STEPS', async () => {
+    const { MAX_HRM_STEPS } = await import('./adapters/hrm.js');
+    expect(MAX_HRM_STEPS).toBe(500);
+    const r = await runHrmSimulation({ steps: 999999 });
+    // Either unavailable (no python/hrm) or succeeded — but steps must never
+    // exceed the cap, and the call must not throw.
+    if (r.available) {
+      expect(r.steps).toBeLessThanOrEqual(500);
+    } else {
+      expect(r.reason).toBeTruthy();
+    }
+  });
+
+  it('seed route requires COLLAB_ALLOW_SEED=1 in token mode', async () => {
+    setTokenMode();
+    delete process.env.COLLAB_ALLOW_SEED;
+    try {
+      const { status, json } = await post('/seed/demo', {}, { token: 'tok-owner' });
+      expect(status).toBe(403);
+      expect(json.error).toMatch(/COLLAB_ALLOW_SEED/);
+    } finally {
+      setDisabledMode();
+    }
+  });
+
+  it('admin export works for authenticated callers; restore gated without flag', async () => {
+    setTokenMode();
+    delete process.env.COLLAB_ALLOW_RESTORE;
+    try {
+      const exp = await get('/admin/export', { token: 'tok-owner' });
+      expect(exp.status).toBe(200);
+      expect(exp.json.format).toBe('quadra-seer-store-export/v1');
+      const rst = await post('/admin/snapshots/nonexistent/restore', {}, { token: 'tok-owner' });
+      expect(rst.status).toBe(403);
+    } finally {
+      setDisabledMode();
+    }
+  });
+});

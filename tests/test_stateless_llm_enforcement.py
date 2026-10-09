@@ -3,16 +3,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import torch
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "atlantean_core"))
 sys.path.insert(0, str(ROOT))
 
-from hot_memory import AtlanteanHotMemory
-import llm_interface
+try:
+    import torch
+    from hot_memory import AtlanteanHotMemory
+    import llm_interface
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover - torch not installed
+    _TORCH_AVAILABLE = False
 
 
+@unittest.skipUnless(_TORCH_AVAILABLE, 'torch not installed')
 class TestStatelessLLMEnforcement(unittest.TestCase):
     def test_antipattern_guards_raise(self):
         with self.assertRaises(NotImplementedError):

@@ -1,0 +1,91 @@
+# Production topology for QuadraSeer.
+#
+#   nginx  (host 80 -> container 8080)  edge proxy: static frontend + /api/* routing
+#   node   (internal :3001)             Node/Express API: /api/collab, /api/chat,
+#                                       /api/tts, /api/summarize, /health, /ready
+#                                       (HRM runs via python3 in this image)
+#   flask  (internal :5001)             Python/Flask Atlantean backend: /api/atlantean
+#   redis  (internal :6379)             persistence for the Python backend (AOF)
+#
+# Required env (see .env.example): GEMINI_API_KEY, ATLANTEAN_SESSION_SECRET.
+# Strongly recommended: COLLAB_API_TOKEN or COLLAB_ACTORS — without either,
+#   token auth mode 401s every API request (fail-closed by design).
+#
+# Bring up:   docker compose -f docker-compose.prod.yml up -d --build
+# Logs:       docker compose -f docker-compose.prod.yml logs -f
+# Tear down:  docker compose -f docker-compose.prod.yml down   (volumes persist)
+#
+# Backups: run `npm run collab:snapshot` on a schedule on the host, or exec
+# into the node container. See docs/BACKUP_RUNBOOK.md.
+
+services:
+  redis:
+    image: redis:7.4.1-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  flask:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: 5001
+      ATLANTEAN_SESSION_SECRET: ${ATLANTEAN_SESSION_SECRET:?ATLANTEAN_SESSION_SECRET is required}
+      SESSION_COOKIE_SECURE: 1
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # No published ports: reachable only via nginx.
+
+  node:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      COLLAB_AUTH: ${COLLAB_AUTH:-token}
+      COLLAB_API_TOKEN: ${COLLAB_API_TOKEN:-}
+      COLLAB_ACTORS: ${COLLAB_ACTORS:-{}}
+      COLLAB_DATA_DIR: /data/collab-data
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - collab_data:/data/collab-data
+    restart: unless-stopped
+    # No published ports: reachable only via nginx.
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:8080"
+    depends_on:
+      node:
+        condition: service_healthy
+      flask:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  collab_data:
