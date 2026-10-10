@@ -29,6 +29,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # numpy is a hard dependency of the hrm modules and several test files
+      # import it at module level; install it so CI matches a local dev setup.
+      # (torch/cryptography tests skip gracefully when unavailable, so the full
+      # requirements.txt — including heavy torch — is intentionally not installed.)
+      - run: python -m pip install --quiet numpy==1.26.3
       - run: python -m unittest discover -s tests
         # torch-dependent tests skip (not fail) when torch is unavailable
 
